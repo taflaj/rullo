@@ -11,6 +11,72 @@ import (
 	"strings"
 )
 
+// Row represents a row within a board.
+type Row []int
+
+// Sum sums all elements of a row.
+func (row Row) Sum() int {
+	sum := 0
+	for _, v := range row {
+		sum += v
+	}
+	return sum
+}
+
+// Board contains a series of rows forming a board.
+type Board []Row
+
+// Duplicate creates an exact copy of the board on a separate space.
+func (board Board) Duplicate() Board {
+	rows := len(board)
+	dup := Board(make(Board, rows))
+	for i := 0; i < rows; i++ {
+		dup[i] = Row(make([]int, len(board[i])))
+		copy(dup[i], board[i])
+	}
+	return dup
+}
+
+// Sum sums a given column of a board.
+func (board Board) Sum(col int) int {
+	sum := 0
+	for _, r := range board {
+		sum += r[col]
+	}
+	return sum
+}
+
+// Array contains an array of rows with valid solutions.
+type Array []Row
+
+// Append adds a new plausible solution to a given row.
+func (a *Array) Append(solution Row) {
+	*a = append(*a, solution)
+}
+
+// Plausibles contains all rows with valid solutions.
+type Plausibles []Array
+
+// Assemble returns a board with a plausible solution.
+func (p Plausibles) Assemble(c chan Board, board *Board, rowNo int) {
+	if rowNo >= len(p) { // board is assembled
+		c <- *board
+		*board = (*board).Duplicate() // to avoid data contamination
+	} else {
+		for _, row := range p[rowNo] { // choose each plausible solution on this row
+			(*board)[rowNo] = row
+			p.Assemble(c, board, rowNo+1) // proceed with the following row
+		}
+	}
+}
+
+// Iterate is a goroutine that returns all combinations of plausible solutions.
+func (p Plausibles) Iterate(c chan Board) {
+	board := make(Board, len(p))
+	p.Assemble(c, &board, 0)
+	close(c)
+}
+
 // Converts a string to its numeric value.
 func convert(line int, value string) int {
 	n, err := strconv.Atoi(value)
@@ -77,7 +143,7 @@ func load(c chan []int, s *bufio.Scanner) {
 }
 
 // Creates a new board with data from the input file.
-func newBoard(file string) ([][]int, []int, []int) {
+func newBoard(file string) (Board, []int, []int) {
 	f, err := os.Open(file)
 	if err != nil {
 		panic(fmt.Sprintf("Error opening file %v", file))
@@ -87,9 +153,9 @@ func newBoard(file string) ([][]int, []int, []int) {
 	go load(data, bufio.NewScanner(f))
 	row := <-data // first row contains board dimensions
 	rows := row[1]
-	board := make([][]int, rows)
-	for i := 0; i < rows; i++ {
-		board[i] = <-data
+	board := Board(make(Board, rows))
+	for i := 0; i < rows; i++ { // load rows
+		board[i] = Row(<-data)
 	}
 	horz := <-data   // horizontal sums
 	vert := <-data   // vertical sums
@@ -99,65 +165,44 @@ func newBoard(file string) ([][]int, []int, []int) {
 	return board, horz, vert
 }
 
-// Creates an exact copy of the board.
-func duplicate(board [][]int) [][]int {
-	rows := len(board)
-	dup := make([][]int, rows)
-	for i := 0; i < rows; i++ {
-		dup[i] = make([]int, len(board[i]))
-		copy(dup[i], board[i])
-	}
-	return dup
-}
-
-// Sums all elements of a row.
-func sum(row []int) int {
-	sum := 0
-	for _, v := range row {
-		sum += v
-	}
-	return sum
-}
-
-// Sums a given column of a board.
-func vsum(board [][]int, col int) int {
-	sum := 0
-	for _, r := range board {
-		sum += r[col]
-	}
-	return sum
-}
-
-var solutions int
-
 // Explores all possible solutions using brute force.
-func explore(board [][]int, solution [][]int, r int, cols int, horz []int, vert []int) {
-	if r >= len(board) { // we may have a solution
+func explore(board Board, horz []int, vert []int) {
+	rows := len(board)
+	cols := len(board[0])
+	plausibles := make(Plausibles, rows)
+	// find all plausible solutions for each row
+	for r := 0; r < rows; r++ {
+		plausibles[r] = Array{}
+		for i := 0; i < 1<<uint(cols); i++ { // exercise all combinations
+			k := i
+			row := make(Row, cols)
+			for j := 0; j < cols; j++ {
+				if k%2 == 0 {
+					row[j] = board[r][j]
+				}
+				k >>= 1
+			}
+			if row.Sum() == horz[r] { // we have a plausible solution
+				plausibles[r].Append(row)
+			}
+		}
+	}
+	// match all plausible solutions with one another.
+	n := 0
+	solutions := make(chan Board, 100)
+	go plausibles.Iterate(solutions)
+	for solution := range solutions {
+		// see if the newly assembled board is an actual solution
 		solved := true
-		for i := 0; i < cols; i++ {
-			if vsum(solution, i) != vert[i] {
+		for col := range solution[0] {
+			if solution.Sum(col) != vert[col] {
 				solved = false // this column failed validation
 				break
 			}
 		}
 		if solved {
-			solutions++
-			fmt.Printf("%3v: %v\n", solutions, solution)
-		}
-	} else {
-		for i := 0; i < 1<<uint(cols); i++ { // exercise all cells
-			k := i
-			row := make([]int, cols)
-			for j := 0; j < cols; j++ {
-				if k%2 != 0 {
-					row[j] = board[r][j]
-				}
-				k >>= 1
-			}
-			if sum(row) == horz[r] { // we have a plausibe solution
-				solution[r] = row
-				explore(board, solution, r+1, cols, horz, vert) // try the next row
-			}
+			n++
+			fmt.Printf("%3v: %v\n", n, solution)
 		}
 	}
 }
@@ -176,6 +221,6 @@ func main() {
 	} else {
 		board, horz, vert := newBoard(os.Args[1])
 		fmt.Printf("board = %v\n horz = %v\n vert = %v\n", board, horz, vert)
-		explore(board, duplicate(board), 0, len(board[0]), horz, vert)
+		explore(board, horz, vert)
 	}
 }
