@@ -60,8 +60,7 @@ type Plausibles []Array
 // Assemble returns a board with a plausible solution.
 func (p Plausibles) Assemble(c chan Board, board *Board, rowNo int) {
 	if rowNo >= len(p) { // board is assembled
-		c <- *board
-		*board = (*board).Duplicate() // to avoid data contamination
+		c <- (*board).Duplicate() // to avoid data contamination
 	} else {
 		for _, row := range p[rowNo] { // choose each plausible solution on this row
 			(*board)[rowNo] = row
