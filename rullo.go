@@ -4,11 +4,12 @@
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/taflaj/util/reader"
 )
 
 // Row represents a row within a board.
@@ -86,14 +87,17 @@ func convert(line int, value string) int {
 }
 
 // This goroutine reads data from the input file and converts it to int slices.
-func load(c chan []int, s *bufio.Scanner) {
+func load(c chan []int, in *reader.LineReader) {
 	first := true
 	finished := false
 	lineNo := 0
 	var cols, rows, rowNo int
 	var horz []int // horizontal sums
-	for s.Scan() {
-		raw := s.Text()
+	for {
+		raw, ok := in.ReadLine()
+		if !ok {
+			break
+		}
 		line := strings.Fields(strings.Split(raw, "#")[0]) // remove comments and separate data
 		lineNo++
 		switch {
@@ -135,21 +139,13 @@ func load(c chan []int, s *bufio.Scanner) {
 	if !finished {
 		panic("There are missing lines on the input file.")
 	}
-	if err := s.Err(); err != nil {
-		panic(fmt.Sprintf("Error while reading data: %v", err))
-	}
 	close(c)
 }
 
 // Creates a new board with data from the input file.
 func newBoard(file string) (Board, []int, []int) {
-	f, err := os.Open(file)
-	if err != nil {
-		panic(fmt.Sprintf("Error opening file %v", file))
-	}
-	defer f.Close()
 	data := make(chan []int)
-	go load(data, bufio.NewScanner(f))
+	go load(data, reader.NewLineReader(file))
 	row := <-data // first row contains board dimensions
 	rows := row[1]
 	board := Board(make(Board, rows))
